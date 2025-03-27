@@ -239,6 +239,15 @@ ax[1].legend(loc='upper left')
 plt.show()
 
 #high-level implentation using the nn.model API
+"""
+torch.nn.Module 是 PyTorch 中所有神经网络模块的基类，它提供了构建、训练和管理神经网络模型的核心功能。以下是它的关键作用和使用方法：
+​参数管理:自动追踪所有通过 nn.Parameter 定义的参数（如权重和偏置）。
+通过 .parameters() 方法获取所有可训练参数，方便优化器使用。
+​子模块注册:自动识别并管理模型中包含的其他 nn.Module 子模块（如层、块等）。
+​设备移动:使用 .to(device) 将模型及所有参数移动到指定设备（如 CPU 或 GPU）。
+​前向传播定义:必须重写 forward() 方法，定义模型如何从输入计算输出。
+​梯度计算:通过反向传播自动计算梯度，支持 PyTorch 的自动微分机制。
+"""
 class LogisticRegression3(torch.nn.Module):
     def __init__(self,num_features):
         """使用PyTorch高层API构建逻辑回归模型
