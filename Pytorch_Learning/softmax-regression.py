@@ -115,10 +115,10 @@ for epoch in range(num_epochs):
                      %(epoch+1,num_epochs,batch_idx,
                      len(train_dataset)//batch_size,cost))
             
-        with torch.set_grad_enabled(False): # 在不需要梯度的代码块中禁用梯度计算，提升性能和节省内存。
-            print('Epoch: %03d/%03d training accuaracy: %.2f%%' % 
-                  (epoch+1,num_epochs,
-                   compute_accuracy(model,train_loader)))
+    with torch.set_grad_enabled(False): # 在不需要梯度的代码块中禁用梯度计算，提升性能和节省内存。
+        print('Epoch: %03d/%03d training accuaracy: %.2f%%' % 
+              (epoch+1,num_epochs,
+               compute_accuracy(model,train_loader)))
             
 print('test accuracy: %.2f%%' % (compute_accuracy(model,test_loader)) )
 
