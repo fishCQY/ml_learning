@@ -168,7 +168,7 @@ for epoch in range(num_epochs):
 
     model = model.eval()  # eval model after training
     print('Epoch: %03d/%03d training accuracy: %.2f%%' %
-          epoch + 1, num_epochs, compute_accuracy(model, train_loader))
+          (epoch + 1, num_epochs, compute_accuracy(model, train_loader)))
     print('Time elapsed: %.2f min' % ((time.time() - start_time) / 60))
 
 print('Total Training Time: %.2f min' % ((time.time() - start_time) / 60))
