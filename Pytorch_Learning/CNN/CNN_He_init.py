@@ -82,6 +82,10 @@ class ConvNet(torch.nn.Module):
         self.linear_1 = torch.nn.Linear(7 * 7 * 8, num_classes)
 
         # Reinitialize weights using He initialization
+        #He初始化（Kaiming初始化）​ 是何恺明（Kaiting He）等人提出的针对深度神经网络中 ​ReLU激活函数 的权重初始化方法。
+        # 它通过调整权重的方差，缓解了深度网络训练中梯度消失或爆炸的问题，尤其适用于使用ReLU及其变体（如Leaky ReLU）的网络。
+        # 在ResNet等深层网络中，He初始化比Xavier初始化收敛更快且准确率更高。
+        # 使用ReLU时，He初始化的训练损失下降更稳定
         for m in self.modules():
             if isinstance(m, torch.nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight.detach())
