@@ -84,3 +84,165 @@ sys.path.insert(0, utils_dir)
 from helper_evaluate import compute_accuracy
 from helper_data import get_dataloaders_cifar10
 from helper_train import train_classifier_simple_v1
+
+# CIFAR-10 数据集详解
+# 1. ​基本概述
+# ​用途：图像分类任务（监督学习）。
+# ​规模：包含 ​60,000 张彩色图像，分为 ​10 个类别，每类 ​6,000 张。
+# ​训练集：50,000 张（每类 5,000 张）。
+# ​测试集：10,000 张（每类 1,000 张）。
+# ​图像属性：
+# ​分辨率：32×32 像素。
+# ​通道：RGB 彩色（3 通道）。
+# ​类别：飞机（airplane）、汽车（automobile）、鸟（bird）、猫（cat）、鹿（deer）、狗（dog）、青蛙（frog）、马（horse）、船（ship）、卡车（truck）。
+
+set_all_seeds(random_seed)
+# ​Resize(70,70)：
+# 统一图像大小，确保后续裁剪操作的有效性（尤其当原始图像尺寸不一致时）。
+# ​RandomCrop(64,64)：
+# ​随机位置裁剪，增加数据多样性，防止模型过拟合（每次训练看到不同局部）。
+# ​CenterCrop(64,64)：
+# ​中心位置裁剪，保证评估时图像处理方式确定性（结果可复现）。
+# ​ToTensor()：
+# 将PIL图像或NumPy数组转换为 [C, H, W] 格式的Tensor，并自动归一化到 [0, 1]
+train_transforms = transforms.Compose([transforms.Resize((70, 70)),
+                                       transforms.RandomCrop((64, 64)),
+                                       transforms.ToTensor()])
+test_transforms = transforms.Compose([transforms.Resize((70, 70)),
+                                      transforms.CenterCrop((64, 64)),
+                                      transforms.ToTensor()])
+train_loader, valid_loader, test_loader = get_dataloaders_cifar10(batch_size=batch_size,
+                                                                  num_workers=2,
+                                                                  train_transforms=train_transforms,
+                                                                  test_transforms=test_transforms,
+                                                                  validation_fraction=0.1)
+
+# checking the dataset
+print('Training Set:\n')
+for images, labels in train_loader:
+    print('Image batch dimensions:', images.size())
+    print('Image label dimensions:', labels.size())
+    break
+
+# checking the dataset
+print('\nValidation Set:')
+for images, labels in valid_loader:
+    print('Image batch dimensions:', images.size())
+    print('Image label dimensions:', labels.size())
+    print(labels[:10])
+    break
+
+# checking the dataset
+print('\nTesting Set:')
+for images, labels in train_loader:
+    print('Image batch dimensions:', images.size())
+    print('Image label dimensions:', labels.size())
+    print(labels[:10])
+    break
+
+
+class AlexNet(nn.Module):
+    def __init__(self, num_classes):
+        super(AlexNet, self).__init__()
+        # 特征提取网络（卷积部分）
+        self.features = nn.Sequential(
+            # 第1层卷积: 3输入通道 → 64输出通道
+            nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),  # 输入: [3, 64, 64] → 输出: [64, 15, 15]
+            nn.ReLU(inplace=True),  # 原地激活节省内存
+            nn.MaxPool2d(kernel_size=3, stride=2),  # 输出: [64, 7, 7]
+
+            # 第2层卷积: 64 → 192
+            nn.Conv2d(64, 192, kernel_size=5, padding=2),  # 保持尺寸: [192, 7, 7]
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),  # 输出: [192, 3, 3]
+
+            # 连续3层小卷积核堆叠
+            nn.Conv2d(192, 384, kernel_size=3, padding=1),  # [384, 3, 3]
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),  # [256, 3, 3]
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),  # [256, 3, 3]
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),  # 最终特征图: [256, 1, 1]
+        )
+        
+        # 自适应平均池化：将任意尺寸特征图统一到 6x6
+        self.avgpool = nn.AdaptiveAvgPool2d((6, 6))  # 输出: [256, 6, 6]
+
+        # 分类网络（全连接部分）
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),  # 50% dropout 防止过拟合
+            nn.Linear(256 * 6 * 6, 4096),  # 输入特征展开为 9216 维
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(4096, 4096),  # 全连接层
+            nn.ReLU(inplace=True),
+            nn.Linear(4096, num_classes)  # 最终分类层
+        )
+
+
+torch.manual_seed(random_seed)
+model = AlexNet(num_classes=num_classes)
+model.to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+log_dict = train_classifier_simple_v1(
+    num_epochs=num_epochs,
+    model=model,
+    optimizer=optimizer,
+    device=device,
+    train_loader=train_loader,
+    valid_loader=valid_loader,
+    logging_interval=50
+)
+
+import matplotlib.pyplot as plt
+
+loss_list = log_dict['train_loss_per_batch']
+# 训练损失可视化代码解析
+plt.plot(loss_list, label='Minibatch loss')  # 原始小批次损失曲线
+#np.convolve 是 NumPy 中用于计算一维卷积的函数
+plt.plot(np.convolve(
+    loss_list,  # 原始损失序列（每个batch的损失值）
+    np.ones(200) / 200,  # 200点的平均滤波器（每个点代表前200个batch的移动平均）
+    mode='valid'          # 有效卷积模式（仅计算完全重叠的区域，输出长度为 len(loss_list)-199）
+), label='Running average')  # 添加滑动平均曲线
+
+plt.ylabel('Cross Entropy')  # Y轴标签：交叉熵损失值
+plt.xlabel('Iteration')       # X轴标签：迭代次数（1个iteration=1个batch训练）
+plt.legend()                  # 显示图例
+plt.show()                    # 渲染图像窗口
+
+# 代码功能说明：
+# 1. 蓝线（Minibatch loss）：原始训练损失曲线，反映每个batch的即时波动
+# 2. 橙线（Running average）：200个batch的移动平均线，用于观察损失的整体下降趋势
+# 3. 有效卷积模式：丢弃前199个不完整平均的数据点，保证曲线平滑度与统计显著性
+# 4. 横纵坐标标注：明确显示度量的指标（交叉熵损失）和训练进度（迭代次数）
+
+# 应用场景：监控模型训练过程，判断是否出现：
+# - 欠拟合（损失居高不下）
+# - 过拟合（训练损失下降但验证损失上升）
+# - 收敛情况（损失曲线趋于平稳）
+
+plt.plot(np.arange(1, num_epochs + 1), log_dict['train_acc_per_epoch'], label='Training')
+plt.plot(np.arange(1, num_epochs + 1), log_dict['valid_acc_per_epoch'], label='Validation')
+plt.ylabel('Accuracy')
+plt.xlabel('Epochs')
+plt.legend()
+plt.show()
+
+with torch.set_grad_enabled(False):
+    train_acc = compute_accuracy(model=model,
+                                 data_loader=test_loader,
+                                 device=device)
+    test_acc = compute_accuracy(model=model,
+                                data_loader=test_loader,
+                                device=device)
+    valid_acc = compute_accuracy(model=model,
+                                 data_loader=valid_loader,
+                                 device=device)
+    print(f'Train ACC:{valid_acc:.2f}%')
+    print(f'Validation ACC:{valid_acc:.2f}%')
+    print(f'Test ACC:{test_acc:.2f}%')
