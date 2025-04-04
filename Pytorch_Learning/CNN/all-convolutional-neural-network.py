@@ -50,7 +50,7 @@ for images, labels in train_loader:
     print('Image batch dimensions:', images.shape)
     print('Image label dimensions:', labels.shape)
     break
-# 核3x3, 步长1, 填充1,图像大小不变,如果步长为2,图像大小减半,如果核大小为2,步长也为2,图像大小减半
+# 核3x3, 步长1, 填充1,图像大小不变,如果步长为2,图像大小减半,如果核大小为2,步长也为2,图像大小减半,与原来池化层的效果相同,但是计算量更小
 class ConvNet(torch.nn.Module):
     def __init__(self,num_classes):
         super(ConvNet,self).__init__()
