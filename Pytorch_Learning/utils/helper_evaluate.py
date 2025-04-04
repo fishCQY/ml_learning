@@ -51,7 +51,7 @@ def compute_epoch_loss(model, data_loader, device):
             targets = targets.to(device)
             logits = model(features)  # 前向传播
             
-            # 处理分布式训练中的RRef
+            # # 处理分布式训练中的RRef
             if isinstance(logits, torch.distributed.rpc.api.RRef):
                 logits = logits.local_value()
             
