@@ -51,6 +51,7 @@ test_dataset = datasets.MNIST(
     transform = resize_transform,
     download = False
 )
+# Subset是PyTorch中的一个类，用于从数据集中选取指定的子集
 train_dataset = Subset(train_and_valid, train_indices)
 valid_dataset = Subset(train_and_valid, valid_indices)
 
@@ -78,16 +79,17 @@ for epoch in range(2):
         x = x.to(device)
         y = y.to(device)
         break
+# ​​如果shuffle=True​​：两次打印的标签顺序​​应该不同​​,验证数据集是否被shuffle
+# ​​如果shuffle=False​​：两次打印的标签顺序​​完全相同​​
+# 第一次遍历所有数据（触发DataLoader的shuffle机制）
+for images, labels in train_loader:
+    pass  # 什么也不做，但会触发DataLoader的数据加载流程
+print(labels[:10])  # 打印第一个batch的前10个标签
 
-# Check that shuffling works properly
-# i.e., label indices should be in random order.
-# Also, the label order should be different in the second epoch.
-for images,labels in train_loader:
+# 第二次遍历所有数据（触发新的shuffle）
+for images, labels in train_loader:
     pass
-print(labels[:10])
-for images,labels in train_loader:
-    pass
-print(labels[:10])
+print(labels[:10])  # 再次打印第一个batch的前10个标签
 
 # The following code cell that implements the DenseNet-121 architecture 
 # is a derivative of the code provided at 
