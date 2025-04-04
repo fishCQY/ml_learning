@@ -166,14 +166,3 @@ print('Total Training Time: %.2f min' % ((time.time() - start_time) / 60))
 with torch.set_grad_enabled(False):  # save memory during inference
     print('Test accuracy: %.2f%%' % (compute_accuracy(model, test_loader, device=DEVICE)))
 
-for batch_idx, (features, targets) in enumerate(test_loader):
-    features = features
-    targets = targets
-    break
-
-nhwc_img = np.transpose(features[0], axes=(1, 2, 0))
-nhw_img = np.squeeze(nhwc_img.numpy(), axis=2)
-plt.imshow(nhw_img, cmap='Greys')
-model = model.eval()
-logits, probas = model(features.to(device)[0, None])
-print('Probability %.2f %%' % (probas[0][7] * 100))
