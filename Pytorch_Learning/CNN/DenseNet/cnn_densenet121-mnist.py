@@ -103,68 +103,161 @@ from collections import OrderedDict
 import torch.utils.checkpoint as cp
 
 def _bn_function_factory(norm, relu, conv):
+    """创建用于特征拼接+BN+激活+卷积的闭包函数
+    
+    Args:
+        norm: 归一化层 (如BatchNorm2d)
+        relu: 激活层 (如ReLU) 
+        conv: 卷积层 (如Conv2d)
+        
+    Returns:
+        bn_function: 处理输入特征的函数
+    """
     def bn_function(*inputs):
-        concated_features = torch.cat(inputs, 1)
-        bottleneck_output = conv(relu(norm(concated_features)))
+        """特征拼接与处理函数
+        
+        输入: 多个特征图张量
+        输出: 处理后的特征张量
+        """
+        # 沿通道维度拼接所有输入特征
+        concated_features = torch.cat(inputs, 1)  # shape: [B, sum(C_i), H, W]
+        
+        # 标准化 -> 激活 -> 卷积压缩
+        bottleneck_output = conv(relu(norm(concated_features)))  
         return bottleneck_output
-    return bn_function
+    
+    return bn_function  # 返回配置好的处理函数
 
 class _DenseLayer(nn.Sequential):
+    """DenseNet 基础层模块，包含Bottleneck结构
+    
+    Args:
+        num_input_features: 输入通道数
+        growth_rate: 每个层输出的新特征图数 (k)
+        bn_size: 瓶颈层通道放大因子 (默认4)
+        drop_rate: Dropout概率
+        memory_efficient: 是否启用内存优化模式
+    """
     def __init__(self, num_input_features, growth_rate, bn_size, drop_rate, memory_efficient=False):
         super(_DenseLayer, self).__init__()
-        self.add_module('norm1', nn.BatchNorm2d(num_input_features)),
-        self.add_module('relu1', nn.ReLU(inplace=True)),
-        self.add_module('conv1', nn.Conv2d(num_input_features, bn_size *
-                                           growth_rate, kernel_size=1, stride=1,
-                                           bias=False)),
-        self.add_module('norm2', nn.BatchNorm2d(bn_size * growth_rate)),
-        self.add_module('relu2', nn.ReLU(inplace=True)),
-        self.add_module('conv2', nn.Conv2d(bn_size * growth_rate, growth_rate,
-                                           kernel_size=3, stride=1, padding=1,
-                                           bias=False)),
+        
+        # 构建Bottleneck结构 (BN -> ReLU -> 1x1Conv -> BN -> ReLU -> 3x3Conv)
+        self.add_module('norm1', nn.BatchNorm2d(num_input_features))  # 输入归一化
+        self.add_module('relu1', nn.ReLU(inplace=True))               # 激活
+        self.add_module('conv1', nn.Conv2d(                           # 1x1卷积压缩通道
+            in_channels=num_input_features,
+            out_channels=bn_size * growth_rate,  # 压缩到 bn_size*k 通道
+            kernel_size=1,
+            stride=1,
+            bias=False))
+        
+        self.add_module('norm2', nn.BatchNorm2d(bn_size * growth_rate))  # 瓶颈层归一化
+        self.add_module('relu2', nn.ReLU(inplace=True))                   # 激活
+        self.add_module('conv2', nn.Conv2d(                               # 3x3卷积生成新特征
+            in_channels=bn_size * growth_rate,
+            out_channels=growth_rate,  # 最终输出k个特征图
+            kernel_size=3,
+            stride=1,
+            padding=1,  # 保持空间尺寸不变
+            bias=False))
+        
         self.drop_rate = drop_rate
-        self.memory_efficient = memory_efficient
+        self.memory_efficient = memory_efficient  # 是否启用梯度检查点节省内存
 
     def forward(self, *prev_features):
+        """前向传播，处理所有先前层的特征
+        
+        输入: 来自前面所有层的特征图列表 
+        输出: 新生成的特征图
+        """
+        # 使用工厂函数生成特征处理函数
         bn_function = _bn_function_factory(self.norm1, self.relu1, self.conv1)
+        
+        # 内存高效模式：使用梯度检查点减少内存占用
         if self.memory_efficient and any(prev_feature.requires_grad for prev_feature in prev_features):
-            bottleneck_output = cp.checkpoint(bn_function, *prev_features)
+            bottleneck_output = cp.checkpoint(bn_function, *prev_features)  # 分段计算，节省内存
         else:
-            bottleneck_output = bn_function(*prev_features)
-        new_features = self.conv2(self.relu2(self.norm2(bottleneck_output)))
+            bottleneck_output = bn_function(*prev_features)  # 常规前向计算
+            
+        # 通过第二组BN+ReLU+Conv
+        new_features = self.conv2(self.relu2(self.norm2(bottleneck_output)))# 所谓的H函数
+        
+        # 应用Dropout（如果启用）
         if self.drop_rate > 0:
-            new_features = F.dropout(new_features, p=self.drop_rate,
-                                     training=self.training)
-        return new_features
+            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
+            
+        return new_features  # 返回当前层生成的新特征
         
     
 class _DenseBlock(nn.Module):
+    """DenseNet 密集块，包含多个密集层
+    
+    Args:
+        num_layers: 当前块中的层数
+        num_input_features: 初始输入通道数
+        bn_size: 瓶颈层通道放大因子
+        growth_rate: 每层生成的新特征数 (k)
+        drop_rate: Dropout概率
+        memory_efficient: 是否启用内存优化
+    """
     def __init__(self, num_layers, num_input_features, bn_size, growth_rate, drop_rate, memory_efficient=False):
         super(_DenseBlock, self).__init__()
+        
+        # 逐层构建密集层
         for i in range(num_layers):
+            # 计算当前层的输入通道数 = 初始输入 + 前面所有层输出的总和
+            layer_input_channels = num_input_features + i * growth_rate
+            
+            # 创建密集层并添加到模块
             layer = _DenseLayer(
-                num_input_features + i * growth_rate,
+                num_input_features=layer_input_channels,
                 growth_rate=growth_rate,
                 bn_size=bn_size,
                 drop_rate=drop_rate,
-                memory_efficient=memory_efficient,
+                memory_efficient=memory_efficient
             )
-            self.add_module('denselayer%d' % (i + 1), layer)
+            self.add_module('denselayer%d' % (i + 1), layer)  # 命名如 denselayer1, denselayer2...
 
     def forward(self, init_features):
-        features = [init_features]
+        """前向传播，处理初始特征并逐层生成新特征
+        
+        输入: 
+            init_features: 初始输入特征 (来自前一过渡层或输入)
+        输出:
+            所有层特征拼接后的结果
+        """
+        features = [init_features]  # 初始化特征列表
+        
+        # 逐层处理：每个层接收前面所有层的输出
         for name, layer in self.named_children():
-            new_features = layer(*features)
-            features.append(new_features)
-        return torch.cat(features, 1)
+            new_features = layer(*features)  # 将当前所有特征传递给下一层
+            features.append(new_features)    # 将新特征加入列表
+            
+        # 沿通道维度拼接所有层的输出
+        return torch.cat(features, dim=1)  # shape: [B, C_init + num_layers*k, H, W]
 
 class _Transition(nn.Sequential):
+    """DenseNet的过渡层模块，用于压缩特征图尺寸和通道数
+    包含: BN -> ReLU -> 1x1卷积 -> 2x2平均池化
+    
+    Args:
+        num_input_features: 输入特征通道数
+        num_output_features: 输出特征通道数（通常为输入的一半）
+    """
     def __init__(self, num_input_features, num_output_features):
         super(_Transition, self).__init__()
+        # 批量归一化层（处理输入特征）
         self.add_module('norm', nn.BatchNorm2d(num_input_features))
+        # ReLU激活函数（inplace操作节省内存）
         self.add_module('relu', nn.ReLU(inplace=True))
-        self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
-                                          kernel_size=1, stride=1, bias=False))
+        # 1x1卷积压缩通道数（降维作用）
+        self.add_module('conv', nn.Conv2d(
+            num_input_features, 
+            num_output_features,
+            kernel_size=1, 
+            stride=1, 
+            bias=False))  # 无偏置项
+        # 2x2平均池化下采样（空间维度减半）
         self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
 
 class DenseNet121(nn.Module):
@@ -174,8 +267,8 @@ class DenseNet121(nn.Module):
     参数说明
     growth_rate (int): 每个层中增加的滤器数量，即论文中的 k。
     例如：如果 growth_rate=12，则每个密集层会增加 12 个滤器。
-    block_config (list of 4 ints): 每个池化块中包含的层的数量。
-    例如：block_config=[2, 2, 2, 2] 表示网络包含 4 个池化块，每个块中有 2 个密集层。
+    block_config (list of 4 ints): 每个密集块中包含的层的数量。
+    例如：block_config=[2, 2, 2, 2] 表示网络包含 4 个密集块，每个块中有 2 个密集层。
     num_init_featuremaps (int): 第一层卷积层中学习的滤器数量。
     例如：num_init_featuremaps=64 表示第一层卷积层会输出 64 个特征图。
     bn_size (int): 瓶颈层中滤器数量的乘数因子。
@@ -191,61 +284,75 @@ class DenseNet121(nn.Module):
     默认值为 False。
     更多细节请参考论文《"Densely Connected Convolutional Networks" https://arxiv.org/pdf/1707.06990.pdf》。
     """
-    def __init__(self,growth_rate = 32,block_config =(6,12,24,16),
-                 num_init_featuremaps = 64,bn_size =4,drop_rate =0,
-                 num_classes =1000,memory_efficient = False,gray_scale = False):
-        super(DenseNet121,self).__init__()
-        if gray_scale:
-            in_channels =1
-        else:
-            in_channels =3
+    def __init__(self, growth_rate=32, block_config=(6,12,24,16),
+                 num_init_featuremaps=64, bn_size=4, drop_rate=0,
+                 num_classes=1000, memory_efficient=False, gray_scale=False):
+        """DenseNet121网络结构初始化
+        参数:
+            growth_rate: 每层新增的特征图数量 (k)
+            block_config: 各密集块的层数配置 [4个元素的元组]
+            num_init_featuremaps: 初始卷积层输出的特征图数
+            bn_size: 瓶颈层通道放大因子
+            drop_rate: dropout概率
+            gray_scale: 是否为灰度输入 (MNIST需设为True)
+        """
+        super(DenseNet121, self).__init__()
+        # 确定输入通道数（MNIST灰度图为1通道）
+        in_channels = 1 if gray_scale else 3
+        
+        # 初始特征提取层 (conv7x7 + BN + ReLU + maxpool3x3)
         self.features = nn.Sequential(OrderedDict([
-            ('conv0',nn.Conv2d(in_channels=in_channels,out_channels=num_init_featuremaps,
-                               kernel_size=7,stride=2,
-                               padding =3,bias=False)),
-            ('norm0',nn.BatchNorm2d(num_features=num_init_featuremaps)),
-            ('relu0',nn.ReLU(inplace=True)),
-            ('pool0',nn.MaxPool2d(kernel_size=3,stride=2,padding=1)),
+            ('conv0', nn.Conv2d(in_channels, num_init_featuremaps,
+                               kernel_size=7, stride=2, padding=3, bias=False)),  # 空间维度减半
+            ('norm0', nn.BatchNorm2d(num_init_featuremaps)),
+            ('relu0', nn.ReLU(inplace=True)),
+            ('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),  # 再次空间维度减半
         ]))
-        # Each denseblock
+        
+        # 构建密集块和过渡层
         num_features = num_init_featuremaps
-        for i,num_layers in enumerate(block_config):
-            block = _DenseBlock(
+        for i, num_layers in enumerate(block_config):
+            # 添加密集块
+            self.features.add_module('denseblock%d'%(i+1), _DenseBlock(
                 num_layers=num_layers,
                 num_input_features=num_features,
                 bn_size=bn_size,
                 growth_rate=growth_rate,
                 drop_rate=drop_rate,
                 memory_efficient=memory_efficient
-            )
-            self.features.add_module('denseblock%d'%(i+1),block)
-            num_features = num_features +num_layers*growth_rate
+            ))
+            num_features += num_layers * growth_rate  # 更新特征通道数
+            
+            # 非最后一个块后添加过渡层（压缩通道和空间维度）
             if i != len(block_config)-1:
-                trans = _Transition(num_input_features=num_features,
-                                    num_output_features=num_features//2)
-                self.features.add_module('transition%d'%(i+1),trans)
-                num_features = num_features //2
-        # Final batch norm
-        self.features.add_module('norm5',nn.BatchNorm2d(num_features))
-        # Linear layer
-        self.classifier = nn.Linear(num_features,num_classes)
-        # Official init from torch repo.
+                self.features.add_module('transition%d'%(i+1),
+                    _Transition(num_features, num_features//2))  # 通道数减半
+                num_features = num_features // 2
+                
+        # 最终处理层
+        self.features.add_module('norm5', nn.BatchNorm2d(num_features))
+        
+        # 分类器 (全局平均池化后接全连接层)
+        self.classifier = nn.Linear(num_features, num_classes)
+        
+        # 参数初始化
         for m in self.modules():
-            if isinstance(m,nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight)
-            elif isinstance(m,nn.BatchNorm2d):
-                nn.init.constant_(m.weight,1)
-                nn.init.constant_(m.bias,0)
-            elif isinstance(m,nn.Linear):
-                nn.init.constant_(m.bias,0)
-    def forward(self,x):
-        features = self.features(x)
-        out = F.relu(features,inplace=True)
-        out = F.adaptive_avg_pool2d(out,(1,1))
-        out = torch.flatten(out,1)
-        logits = self.classifier(out)
-        probas = F.softmax(logits,dim=1)
-        return logits,probas
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)  # 卷积层使用He初始化
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)     # BN层gamma初始化为1
+                nn.init.constant_(m.bias, 0)        # BN层beta初始化为0
+            elif isinstance(m, nn.Linear):
+                nn.init.constant_(m.bias, 0)        # 全连接层偏置初始化为0
+    def forward(self, x):
+        # 前向传播流程
+        features = self.features(x)          # 通过特征提取主干网络
+        out = F.relu(features, inplace=True) # 应用ReLU激活（原位操作节省内存）
+        out = F.adaptive_avg_pool2d(out, (1, 1))  # 全局平均池化到1x1空间维度
+        out = torch.flatten(out, 1)          # 展平为[batch_size, features]形状
+        logits = self.classifier(out)        # 通过全连接层得到原始分数输出
+        probas = F.softmax(logits, dim=1)    # 计算类别概率分布
+        return logits, probas                 # 同时返回原始分数和概率（便于训练和推理）
     
 torch.manual_seed(random_seed)
 model = DenseNet121(num_classes=num_classes,gray_scale=gray_scale)
