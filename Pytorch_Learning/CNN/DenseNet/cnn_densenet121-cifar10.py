@@ -37,18 +37,17 @@ gray_scale = False  # 灰度图像，通道数为1
 
 train_indices = torch.arange(0,48000)
 valid_indices = torch.arange(48000,50000)
-resize_transform = transforms.Compose([transforms.Resize((32,32)), transforms.ToTensor()])
 
 train_and_valid = datasets.CIFAR10(
     root = '/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
     train = True,
-    transform = resize_transform,
+    transform = transforms.ToTensor(),
     download = True
 )
 test_dataset = datasets.CIFAR10(
     root = '/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
     train = False,
-    transform = resize_transform,
+    transform = transforms.ToTensor(),
     download = False
 )
 train_dataset = Subset(train_and_valid, train_indices)

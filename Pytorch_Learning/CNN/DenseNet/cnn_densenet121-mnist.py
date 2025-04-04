@@ -174,6 +174,13 @@ class _DenseLayer(nn.Sequential):
         bn_function = _bn_function_factory(self.norm1, self.relu1, self.conv1)
         
         # 内存高效模式：使用梯度检查点减少内存占用
+        # self.memory_efficient​​：布尔值，控制是否启用内存优化模式
+        # ​​any(prev_feature.requires_grad ...)​​：检查输入特征中是否有需要梯度计算的张量
+        # cp.checkpoint(bn_function, *prev_features)​​
+        # ​​cp.checkpoint​​：PyTorch 的梯度检查点功能
+        # ​​作用​​：在前向传播时不保存中间激活值，而是在反向传播时重新计算
+        # ​​节省显存​​：减少约 30%-50% 的显存占用
+        # ​​代价​​：增加约 20% 的计算时间
         if self.memory_efficient and any(prev_feature.requires_grad for prev_feature in prev_features):
             bottleneck_output = cp.checkpoint(bn_function, *prev_features)  # 分段计算，节省内存
         else:
