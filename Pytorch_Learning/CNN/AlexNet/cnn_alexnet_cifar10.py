@@ -41,7 +41,7 @@ def set_deterministic():
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-    torch.set_deterministic(True)
+    torch.use_deterministic_algorithms(True)
 
 
 random_seed = 1
@@ -56,6 +56,7 @@ set_all_seeds(random_seed)
 
 import sys
 import os
+os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  # 或 ':16:8'
 
 # 获取当前脚本的绝对路径（示例值）
 script_path = os.path.abspath(__file__)
@@ -97,6 +98,8 @@ from helper_train import train_classifier_simple_v1
 # ​类别：飞机（airplane）、汽车（automobile）、鸟（bird）、猫（cat）、鹿（deer）、狗（dog）、青蛙（frog）、马（horse）、船（ship）、卡车（truck）。
 
 set_all_seeds(random_seed)
+# Deterministic behavior not yet supported by AdaptiveAvgPool2d
+# set_deterministic()
 # ​Resize(70,70)：
 # 统一图像大小，确保后续裁剪操作的有效性（尤其当原始图像尺寸不一致时）。
 # ​RandomCrop(64,64)：
@@ -112,7 +115,7 @@ test_transforms = transforms.Compose([transforms.Resize((70, 70)),
                                       transforms.CenterCrop((64, 64)),
                                       transforms.ToTensor()])
 train_loader, valid_loader, test_loader = get_dataloaders_cifar10(batch_size=batch_size,
-                                                                  num_workers=2,
+                                                                  num_workers=0,
                                                                   train_transforms=train_transforms,
                                                                   test_transforms=test_transforms,
                                                                   validation_fraction=0.1)
@@ -167,7 +170,7 @@ class AlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),  # 最终特征图: [256, 1, 1]
         )
-        
+
         # 自适应平均池化：将任意尺寸特征图统一到 6x6
         self.avgpool = nn.AdaptiveAvgPool2d((6, 6))  # 输出: [256, 6, 6]
 
@@ -181,6 +184,13 @@ class AlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(4096, num_classes)  # 最终分类层
         )
+    def forward(self, x):
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), 256 * 6 * 6)
+        logits = self.classifier(x)
+        probas = F.softmax(logits, dim=1)
+        return logits
 
 
 torch.manual_seed(random_seed)

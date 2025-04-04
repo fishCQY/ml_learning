@@ -4,7 +4,11 @@ from helper_evaluate import compute_epoch_loss
 
 import time 
 import torch
-import torch.nn.functional as F 
+import torch.nn.functional as F
+print(f"PyTorch版本: {torch.__version__}")
+print(f"RRef导入成功！")
+print(torch.distributed.rpc)     # 检查模块是否存在
+
 # 提供神经网络函数式接口，包含激活函数、损失函数、卷积操作等，无需实例化 nn.Module 类即可直接调用。
 # ​常见用途：
 # ​激活函数：F.relu, F.sigmoid, F.softmax。
@@ -33,98 +37,76 @@ import xml.etree.ElementTree
 # element.find() / element.findall()：按标签名查找元素。
 # ET.Element() / ET.SubElement()：创建 XML 节点。
 
-def train_classifier_simple_v1(num_epochs, model, optimizer, device,
-                               train_loader, valid_loader=None,
-                               loss_fn=None, logging_interval=100,
+def train_classifier_simple_v1(num_epochs, model, optimizer, device, 
+                               train_loader, valid_loader=None, 
+                               loss_fn=None, logging_interval=100, 
                                skip_epoch_stats=False):
-    """基础分类模型训练函数v1
     
-    参数:
-        num_epochs: 训练总轮数
-        model: 待训练模型
-        optimizer: 优化器
-        device: 训练设备 (cpu/cuda)
-        train_loader: 训练数据加载器
-        valid_loader: 验证数据加载器 (可选)
-        loss_fn: 损失函数 (默认交叉熵)
-        logging_interval: 日志打印间隔（单位：batch）
-        skip_epoch_stats: 是否跳过epoch统计
-    """
+    log_dict = {'train_loss_per_batch': [],
+                'train_acc_per_epoch': [],
+                'train_loss_per_epoch': [],
+                'valid_acc_per_epoch': [],
+                'valid_loss_per_epoch': []}
     
-    # 初始化训练日志字典
-    log_dict = {
-        'train_loss_per_batch': [],      # 每个batch的损失
-        'train_acc_per_epoch': [],       # 每个epoch的训练准确率
-        'train_loss_per_epoch': [],     # 每个epoch的训练损失
-        'valid_acc_per_epoch': [],      # 每个epoch的验证准确率
-        'valid_loss_per_epoch': []      # 每个epoch的验证损失
-    }
-    
-    # 设置默认损失函数
     if loss_fn is None:
-        loss_fn = F.cross_entropy  # 默认使用交叉熵损失
+        loss_fn = F.cross_entropy
 
     start_time = time.time()
     for epoch in range(num_epochs):
-        # 训练模式
+
         model.train()
         for batch_idx, (features, targets) in enumerate(train_loader):
-            # 数据迁移到指定设备
+
             features = features.to(device)
             targets = targets.to(device)
 
-            # 前向传播
+            # FORWARD AND BACK PROP
             logits = model(features)
-            # 分布式训练兼容处理
-            if isinstance(logits, torch.distributed.rpc.api.RRef):
-                logits = logits.local_value()
-            
-            # 损失计算
+            # windows 不支持rpc分布式训练
+            # if isinstance(logits, torch.distributed.rpc.api.RRef):
+            #     logits = logits.local_value()
             loss = loss_fn(logits, targets)
-            
-            # 反向传播与参数更新
             optimizer.zero_grad()
+
             loss.backward()
+
+            # UPDATE MODEL PARAMETERS
             optimizer.step()
 
-            # 记录当前batch损失
+            # LOGGING
             log_dict['train_loss_per_batch'].append(loss.item())
-            
-            # 定期打印训练日志
-            if not batch_idx % logging_interval:
-                print('Epoch:%03d/%03d | Batch %04d/%04d | Loss: %.4f'
-                      % (epoch+1, num_epochs, batch_idx, len(train_loader), loss))
 
-        # epoch统计（验证集评估）
+            if not batch_idx % logging_interval:
+                print('Epoch: %03d/%03d | Batch %04d/%04d | Loss: %.4f'
+                      % (epoch+1, num_epochs, batch_idx,
+                          len(train_loader), loss))
+
         if not skip_epoch_stats:
             model.eval()
-            with torch.set_grad_enabled(False):  # 禁用梯度计算
-                # 计算训练集指标
-                train_acc = compute_accuracy(model, train_loader, device=device)
-                train_loss = compute_epoch_loss(model, train_loader, device=device)
-                print('*** Epoch:%03d/%03d | Train. Acc.: %.3f%% | Loss: %.3f'
-                       % (epoch+1, num_epochs, train_acc, train_loss))
-                
-                # 记录训练指标
+
+            with torch.set_grad_enabled(False):  # save memory during inference
+
+                train_acc = compute_accuracy(model, train_loader, device)
+                train_loss = compute_epoch_loss(model, train_loader, device)
+                print('***Epoch: %03d/%03d | Train. Acc.: %.3f%% | Loss: %.3f' % (
+                      epoch+1, num_epochs, train_acc, train_loss))
                 log_dict['train_loss_per_epoch'].append(train_loss.item())
                 log_dict['train_acc_per_epoch'].append(train_acc.item())
 
-                # 验证集评估
                 if valid_loader is not None:
-                    valid_acc = compute_accuracy(model, valid_loader, device=device)
-                    valid_loss = compute_epoch_loss(model, valid_loader, device=device)
-                    print('*** Epoch:%03d/%03d | Valid. Acc.: %.3f%% | Loss: %.3f'
-                           % (epoch+1, num_epochs, valid_acc, valid_loss))
-                    # 记录验证指标
+                    valid_acc = compute_accuracy(model, valid_loader, device)
+                    valid_loss = compute_epoch_loss(model, valid_loader, device)
+                    print('***Epoch: %03d/%03d | Valid. Acc.: %.3f%% | Loss: %.3f' % (
+                          epoch+1, num_epochs, valid_acc, valid_loss))
                     log_dict['valid_loss_per_epoch'].append(valid_loss.item())
                     log_dict['valid_acc_per_epoch'].append(valid_acc.item())
-        
-        # 打印时间消耗
-        print('Time elapsed: %.2f min' % ((time.time() - start_time) / 60))
-    
-    # 训练结束输出总耗时
-    print('Total Training Time: %.2f min' % ((time.time() - start_time) / 60))
-    return log_dict  # 返回完整训练日志
+
+        print('Time elapsed: %.2f min' % ((time.time() - start_time)/60))
+
+    print('Total Training Time: %.2f min' % ((time.time() - start_time)/60))
+
+    return log_dict
+
 
 def train_classifier_simple_v2(num_epochs, model, optimizer, device,
                                train_loader, valid_loader, test_loader,
