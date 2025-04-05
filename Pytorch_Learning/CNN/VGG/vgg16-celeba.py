@@ -101,7 +101,7 @@ train_loader, valid_loader, test_loader = get_dataloaders_celeba(
     batch_size=BATCH_SIZE,
     train_transforms=custom_transforms,
     test_transforms=custom_transforms,
-    download=False,
+    download=True,
     num_workers=4)
 
 ##########################
