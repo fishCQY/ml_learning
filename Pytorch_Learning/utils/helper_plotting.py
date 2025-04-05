@@ -76,6 +76,9 @@ def plot_accuracy(train_acc_list, valid_acc_list, results_dir):
         valid_acc_list: 各epoch的验证准确率列表  
         results_dir: 结果保存路径（None不保存）
     """
+    # 转换 CUDA 张量为 NumPy（如果列表中有残留 CUDA 张量）
+    train_acc_list = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in train_acc_list]
+    valid_acc_list = [acc.cpu().numpy() if torch.is_tensor(acc) else acc for acc in valid_acc_list]
     num_epochs = len(train_acc_list)  # 根据训练准确率列表长度确定epoch数
 
     # 绘制两条曲线：训练集（蓝色）和验证集（橙色）
