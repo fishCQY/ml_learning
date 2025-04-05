@@ -48,7 +48,11 @@ venv.bak/               # 虚拟环境备份
 # ==================== #
 # 数据与模型文件         #
 # ==================== #
+# 绝对路径写法（推荐）
+/Pytorch_Learning/datasets/
 Pytorch_Learning/CNN/AlexNet/data/cifar-10-python.tar.gz
+**/datasets/          # 数据集目录（建议用占位符替代）
+**/data/*/raw/    # 原始数据（通常不提交）
 /data/                  # 原始数据集目录（建议用占位符替代）
 /data/*/raw/            # 原始数据（通常不提交）
 /data/*/processed/      # 处理后的数据
