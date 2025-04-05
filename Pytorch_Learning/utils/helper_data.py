@@ -41,15 +41,15 @@ def get_dataloaders_mnist(batch_size, num_workers=0,
     if test_transforms is None:
         test_transforms = transforms.ToTensor()
 
-    train_dataset = datasets.MNIST(root='data',
+    train_dataset = datasets.MNIST(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                    train=True,
                                    transform=train_transforms,
                                    download=True)
-    valid_dataset = datasets.MNIST(root='data',
+    valid_dataset = datasets.MNIST(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                    train=True,
                                    transform=test_transforms)
     ## 测试集官方已经划分好，测试集已经与训练集完全独立，无需再次划分
-    test_dataset = datasets.MNIST(root='data',
+    test_dataset = datasets.MNIST(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                   train=False,
                                   transform=test_transforms)
 
@@ -95,14 +95,14 @@ def get_dataloaders_cifar10(batch_size, num_workers=0,
     if test_transforms is None:
         test_transforms = transforms.ToTensor()
 
-    train_dataset = datasets.CIFAR10(root='data',
+    train_dataset = datasets.CIFAR10(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                      train=True,
                                      transform=train_transforms,
                                      download=True)
-    valid_dataset = datasets.CIFAR10(root='data',
+    valid_dataset = datasets.CIFAR10(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                      train=True,
                                      transform=test_transforms)
-    test_dataset = datasets.CIFAR10(root='data',
+    test_dataset = datasets.CIFAR10(root='/root/autodl-fs/ml_learning/Pytorch_Learning/datasets',
                                     train=False,
                                     transform=test_transforms)
 
